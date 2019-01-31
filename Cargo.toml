@@ -1,0 +1,8 @@
+[package]
+name = "stunclient"
+version = "0.1.0"
+authors = ["Vitaly _Vi Shukela <vi0oss@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+stun_codec = "0.1.10"
