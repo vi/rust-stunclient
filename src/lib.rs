@@ -17,6 +17,9 @@ use stun_codec::rfc5389::{methods::BINDING, Attribute};
 use stun_codec::{Message, MessageClass, TransactionId};
 use std::time::Duration;
 
+/// Primitive error handling used in this library.
+/// File an issue if you don't like it.
+pub type Error = Box<dyn std::error::Error>;
 
 /// Options for querying STUN server
 pub struct StunClient {
@@ -72,14 +75,7 @@ impl StunClient {
 }
 
 impl StunClient {
-    /// Get external (server-reflexive transport address) IP address and port of specified UDP socket
-    pub fn query_external_address(
-        &self,
-        udp: &UdpSocket,
-    ) -> Result<SocketAddr, Box<dyn std::error::Error>> {
-
-        let stun_server = self.stun_server;
-
+    fn get_binding_request(&self) -> Result<Vec<u8>, Error> {
         use rand::Rng;
         let random_bytes = rand::thread_rng().gen::<[u8; 12]>();
 
@@ -94,6 +90,34 @@ impl StunClient {
         // Encodes the message
         let mut encoder = MessageEncoder::new();
         let bytes = encoder.encode_into_bytes(message.clone())?;
+        Ok(bytes)
+    }
+
+    fn decode_address(buf: &[u8]) -> Result<SocketAddr, Error> {
+        let mut decoder = MessageDecoder::<Attribute>::new();
+        let decoded = decoder
+            .decode_from_bytes(buf)?
+            .map_err(|_| format!("Broken STUN reply"))?;
+
+        //eprintln!("Decoded message: {:?}", decoded);
+
+        let external_addr1 = decoded.get_attribute::<XorMappedAddress>().map(|x|x.address());
+        let external_addr2 = decoded.get_attribute::<XorMappedAddress2>().map(|x|x.address());
+        let external_addr3 = decoded.get_attribute::<MappedAddress>().map(|x|x.address());
+        let external_addr = external_addr1.or(external_addr2).or(external_addr3);
+        let external_addr = external_addr.ok_or_else(||format!("No XorMappedAddress or MappedAddress in STUN reply"))?;
+
+        Ok(external_addr)
+    }
+
+    /// Get external (server-reflexive transport address) IP address and port of specified UDP socket
+    pub fn query_external_address(
+        &self,
+        udp: &UdpSocket,
+    ) -> Result<SocketAddr, Error> {
+        let stun_server = self.stun_server;
+
+        let bytes = self.get_binding_request()?;
 
         udp.send_to(&bytes[..], stun_server)?;
 
@@ -133,18 +157,7 @@ impl StunClient {
                 continue;
             }
 
-            let mut decoder = MessageDecoder::<Attribute>::new();
-            let decoded = decoder
-                .decode_from_bytes(buf)?
-                .map_err(|_| format!("Broken STUN reply"))?;
-
-            //eprintln!("Decoded message: {:?}", decoded);
-
-            let external_addr1 = decoded.get_attribute::<XorMappedAddress>().map(|x|x.address());
-            let external_addr2 = decoded.get_attribute::<XorMappedAddress2>().map(|x|x.address());
-            let external_addr3 = decoded.get_attribute::<MappedAddress>().map(|x|x.address());
-            let external_addr = external_addr1.or(external_addr2).or(external_addr3);
-            let external_addr = external_addr.ok_or_else(||format!("No XorMappedAddress or MappedAddress in STUN reply"))?;
+            let external_addr = StunClient::decode_address(buf)?;
 
             udp.set_read_timeout(old_read_timeout)?;
             return Ok(external_addr)
