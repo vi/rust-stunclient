@@ -26,6 +26,8 @@ pub struct StunClient {
     pub retry_interval: Duration,
     /// Address of the STUN server
     pub stun_server: SocketAddr,
+    /// `SOFTWARE` attribute value in binding request
+    pub software: Option<&'static str>,
 }
 
 impl StunClient {
@@ -35,6 +37,7 @@ impl StunClient {
             timeout: Duration::from_secs(10),
             retry_interval: Duration::from_secs(1),
             stun_server,
+            software: Some("SimpleRustStunClient"),
         }
     }
 
@@ -60,6 +63,12 @@ impl StunClient {
         self.retry_interval = retry_interval;
         self
     }
+
+    /// Set `software` field, builder pattern.
+    pub fn set_software(&mut self, software: Option<&'static str>) -> &mut Self {
+        self.software = software;
+        self
+    }
 }
 
 impl StunClient {
@@ -75,9 +84,12 @@ impl StunClient {
         let random_bytes = rand::thread_rng().gen::<[u8; 12]>();
 
         let mut message = Message::new(MessageClass::Request, BINDING, TransactionId::new(random_bytes));
-        message.add_attribute(Attribute::Software(Software::new(
-            "SimpleRustStunClient".to_owned(),
-        )?));
+        
+        if let Some(s) = self.software {
+            message.add_attribute(Attribute::Software(Software::new(
+                s.to_owned(),
+            )?));
+        }
 
         // Encodes the message
         let mut encoder = MessageEncoder::new();
