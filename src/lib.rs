@@ -1,6 +1,4 @@
 //! Simple UDP-only STUN client for resolving external IP address:port behind NAT.
-//! 
-//! Currently it supports no async.
 #![feature(impl_trait_in_bindings)]
 #![deny(missing_docs)]
 
