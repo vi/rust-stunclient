@@ -19,7 +19,12 @@ use stun_codec::{MessageDecoder, MessageEncoder};
 
 use bytecodec::{DecodeExt, EncodeExt};
 use std::net::{SocketAddr, UdpSocket};
-use stun_codec::rfc5389::attributes::{Software, XorMappedAddress, XorMappedAddress2, MappedAddress};
+use stun_codec::rfc5389::attributes::{
+     Software,
+     XorMappedAddress,
+     // XorMappedAddress2, 
+     MappedAddress,
+};
 use stun_codec::rfc5389::{methods::BINDING, Attribute};
 use stun_codec::{Message, MessageClass, TransactionId};
 use std::time::Duration;
@@ -109,9 +114,11 @@ impl StunClient {
         //eprintln!("Decoded message: {:?}", decoded);
 
         let external_addr1 = decoded.get_attribute::<XorMappedAddress>().map(|x|x.address());
-        let external_addr2 = decoded.get_attribute::<XorMappedAddress2>().map(|x|x.address());
+        //let external_addr2 = decoded.get_attribute::<XorMappedAddress2>().map(|x|x.address());
         let external_addr3 = decoded.get_attribute::<MappedAddress>().map(|x|x.address());
-        let external_addr = external_addr1.or(external_addr2).or(external_addr3);
+        let external_addr = external_addr1
+            // .or(external_addr2)
+            .or(external_addr3);
         let external_addr = external_addr.ok_or_else(||format!("No XorMappedAddress or MappedAddress in STUN reply"))?;
 
         Ok(external_addr)

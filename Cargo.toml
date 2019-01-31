@@ -13,7 +13,7 @@ tokio-udp = { version = "0.1.3", optional = true }
 tokio-timer = { version = "0.2.9", optional = true }
 
 [replace]
-"stun_codec:0.1.10" = {path = "/mnt/src/git/stun_codec"}
+#"stun_codec:0.1.10" = {path = "/mnt/src/git/stun_codec"}
 
 [dev-dependencies]
 tokio = "0.1.15"
