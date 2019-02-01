@@ -1,5 +1,4 @@
 //! Simple UDP-only STUN client for resolving external IP address:port behind NAT.
-#![feature(impl_trait_in_bindings)]
 #![deny(missing_docs)]
 
 extern crate bytecodec;
