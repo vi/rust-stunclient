@@ -258,7 +258,7 @@ impl futures::Future for ReadFromUdpSocketWhileAlsoPeriodicallySendingSomeData {
                 Ok(Async::Ready(Some(_instant))) => {
                     match udp.poll_send_to(&self.bytes_to_send[..], &self.send_addr) {
                         // Don't realy care about outcome, assuming sending typically works
-                        _ => break,
+                        _ => continue,
                     }
                 }
                 // I don't know what does it mean when Interval emits None
