@@ -53,7 +53,7 @@ impl StunClient {
     /// 
     /// Not for production use, for tests, prototypes and demos.
     /// May block the thread.
-    /// May panic if case of address resolution problems.
+    /// May panic in case of address resolution problems.
     pub fn with_google_stun_server() -> Self {
         use std::net::ToSocketAddrs;
         let stun_server = "stun.l.google.com:19302".to_socket_addrs().unwrap().filter(|x|x.is_ipv4()).next().unwrap();
