@@ -1,6 +1,11 @@
 use stunclient::StunClient;
 
-fn main() -> Result<(), ()> {
+#[cfg(not(feature="async"))]
+fn main() { println!("Cargo feature not enabled for this example"); }
+
+#[cfg(feature="async")]
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), ()> {
     let args : Vec<_> = std::env::args().collect();
     if args.len() > 2 || args.get(1).map(|x|&x[..]) == Some("--help") {
         eprintln!("Usage: client [stun_server_socket_address]");
@@ -17,13 +22,12 @@ fn main() -> Result<(), ()> {
         StunClient::with_google_stun_server()
     };
 
-    let mut t = tokio::runtime::current_thread::Runtime::new().unwrap();
-    let u = tokio_udp::UdpSocket::bind(&"0.0.0.0:0".parse::<std::net::SocketAddr>().unwrap()).unwrap();
+    let u = tokio::net::UdpSocket::bind(&"0.0.0.0:0".parse::<std::net::SocketAddr>().unwrap()).await.unwrap();
 
-    let ret = sc.query_external_address_async(u);
+    let ret = sc.query_external_address_async(&u);
 
-    match t.block_on(ret) {
-        Ok((_u,x)) => println!("{}", x),
+    match ret.await {
+        Ok(x) => println!("{}", x),
         Err(e) => {
             eprintln!("{}", e);
             return Err(());

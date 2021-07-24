@@ -5,12 +5,8 @@ extern crate bytecodec;
 extern crate stun_codec;
 extern crate rand;
 
+extern crate tokio;
 #[cfg(feature="async")]
-extern crate futures;
-#[cfg(feature="async")]
-extern crate tokio_udp;
-#[cfg(feature="async")]
-extern crate tokio_timer;
 
 use stun_codec::{MessageDecoder, MessageEncoder};
 
@@ -175,102 +171,55 @@ impl StunClient {
         }
     }
 
+    #[cfg(feature="async")]
+    async fn query_external_address_async_impl(
+        self,
+        udp: &tokio::net::UdpSocket,
+    ) -> Result<SocketAddr,Error> {
+
+        let mut interval = tokio::time::interval(self.retry_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        let rq = self.get_binding_request()?;
+
+        udp.send_to(&rq[..], &self.stun_server).await?;
+
+        let mut buf = [0u8; 256];
+
+        loop {
+            tokio::select! {
+                biased; // to make impl simpler
+                _t = interval.tick() => {
+                    udp.send_to(&rq[..], &self.stun_server).await?;
+                }
+                c = udp.recv_from(&mut buf[..]) => {
+                    let (len, from) = c?;
+                    if from != self.stun_server {
+                        continue;
+                    }
+                    let buf = &buf[0..len];
+                    let external_addr = StunClient::decode_address(buf)?;
+                    return Ok(external_addr);
+                }
+            }
+        }
+    }
+
     /// async version of `query_external_address`.
     /// 
     /// Requires `async` crate feature to be enabled (it is by default)
     #[cfg(feature="async")]
-    pub fn query_external_address_async(
+    pub async fn query_external_address_async(
         self,
-        udp: tokio_udp::UdpSocket,
-    ) -> impl futures::Future<Item=(tokio_udp::UdpSocket, SocketAddr), Error=Error> {
-        use futures::{Future};
-        let stun_server = self.stun_server;
-        futures::future::result(self.get_binding_request()).and_then(move |bytes| {
-            let interval = tokio_timer::Interval::new(std::time::Instant::now(), self.retry_interval);
-
-            let main_thing = ReadFromUdpSocketWhileAlsoPeriodicallySendingSomeData {
-                interval,
-                send_addr: stun_server,
-                bytes_to_send: bytes,
-                udp: Some(udp),
-            }.and_then(move |(udp,data)| {
-                futures::future::result(StunClient::decode_address(&data[..]))
-                .and_then(move |external_addr| {
-                    futures::future::ok((udp, external_addr))
-                })
-            });
-
-            let timeout = self.timeout;
-            tokio_timer::Timeout::new(main_thing, timeout)
-            .map_err(|e| {
-                if !e.is_inner() {
-                    format!("Timed out waiting for STUN reply").into()
-                } else {
-                    e.into_inner().unwrap()
-                }
-            })
-        })
-    }
-
-}
-
-#[cfg(feature="async")]
-struct ReadFromUdpSocketWhileAlsoPeriodicallySendingSomeData {
-    pub udp: Option<tokio_udp::UdpSocket>,
-    pub send_addr: SocketAddr,
-    pub bytes_to_send: Vec<u8>,
-    pub interval: tokio_timer::Interval,
-}
-
-#[cfg(feature="async")]
-impl futures::Future for ReadFromUdpSocketWhileAlsoPeriodicallySendingSomeData {
-    type Item = (tokio_udp::UdpSocket, Vec<u8>);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<(tokio_udp::UdpSocket, Vec<u8>), Error> {
-        use futures::{Stream, Async};
-
-        if self.udp.is_none() {
-            Err(format!("StunClient's future already resolved and UDP socket is gone"))?;
+        udp: &tokio::net::UdpSocket,
+    ) -> Result<SocketAddr,Error> {
+        let timeout = self.timeout;
+        let ret = tokio::time::timeout(timeout, self.query_external_address_async_impl(udp)).await;
+        match ret {
+            Ok(Ok(x)) => Ok(x),
+            Ok(Err(e)) => Err(e),
+            Err(_elapsed) => Err(format!("Timed out waiting for STUN server reply"))?,
         }
-        
-        let mut udp = self.udp.take().unwrap();
-
-        let mut buf = [0; 256];
-
-
-        loop {
-            match udp.poll_recv_from(&mut buf[..]) {
-                Ok(Async::Ready((len,from))) => {
-                    if from != self.send_addr {
-                        break;
-                    }
-                    let buf = &buf[0..len];
-                    return Ok(Async::Ready((udp, buf.to_vec())))
-                }
-                Ok(Async::NotReady) => break,
-                Err(x) => return Err(x.into()),
-            }
-        }
-
-        loop {
-            match self.interval.poll() {
-                Ok(Async::Ready(Some(_instant))) => {
-                    match udp.poll_send_to(&self.bytes_to_send[..], &self.send_addr) {
-                        // Don't realy care about outcome, assuming sending typically works
-                        _ => continue,
-                    }
-                }
-                // I don't know what does it mean when Interval emits None
-                Ok(Async::Ready(None)) => break,
-                Ok(Async::NotReady) => break,
-                Err(x) => return Err(x.into()),
-            }
-        }
-        
-        self.udp = Some(udp);
-        
-        Ok(Async::NotReady)
     }
 }
 
@@ -297,16 +246,16 @@ mod tests {
     }
 
     #[cfg(feature="async")]
-    #[test]
-    fn it_works_async() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn it_works_async() {
         use std::net::SocketAddr;
         let local_addr : SocketAddr = "0.0.0.0:0".parse().unwrap();
-        let udp = tokio::net::udp::UdpSocket::bind(&local_addr).unwrap();
+        let udp = tokio::net::UdpSocket::bind(&local_addr).await.unwrap();
         
         let s = super::StunClient::with_google_stun_server();
-        let f = s.query_external_address_async(udp);
-        let q = tokio::runtime::current_thread::block_on_all(f);
+        let f = s.query_external_address_async(&udp);
+        let q = f.await;
         assert!(q.is_ok());
-        println!("{}", q.unwrap().1)
+        println!("{}", q.unwrap())
     }
 }
