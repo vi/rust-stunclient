@@ -181,9 +181,6 @@ impl StunClient {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         let rq = self.get_binding_request()?;
-
-        udp.send_to(&rq[..], &self.stun_server).await?;
-
         let mut buf = [0u8; 256];
 
         loop {
