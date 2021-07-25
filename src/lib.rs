@@ -3,7 +3,8 @@
 
 extern crate bytecodec;
 extern crate stun_codec;
-extern crate rand;
+extern crate rand;  
+extern crate anyhow;
 
 extern crate tokio;
 #[cfg(feature="async")]
@@ -22,9 +23,10 @@ use stun_codec::rfc5389::{methods::BINDING, Attribute};
 use stun_codec::{Message, MessageClass, TransactionId};
 use std::time::Duration;
 
-/// Primitive error handling used in this library.
-/// File an issue if you don't like it.
-pub type Error = Box<dyn std::error::Error>;
+/// `anyhow`-based error handling.
+/// File an issue if you want proper `thiserror`-based errors.
+pub type Error = anyhow::Error;
+use anyhow::anyhow;
 
 /// Options for querying STUN server
 pub struct StunClient {
@@ -102,7 +104,7 @@ impl StunClient {
         let mut decoder = MessageDecoder::<Attribute>::new();
         let decoded = decoder
             .decode_from_bytes(buf)?
-            .map_err(|_| format!("Broken STUN reply"))?;
+            .map_err(|_| anyhow!("Broken STUN reply"))?;
 
         //eprintln!("Decoded message: {:?}", decoded);
 
@@ -112,7 +114,7 @@ impl StunClient {
         let external_addr = external_addr1
             // .or(external_addr2)
             .or(external_addr3);
-        let external_addr = external_addr.ok_or_else(||format!("No XorMappedAddress or MappedAddress in STUN reply"))?;
+        let external_addr = external_addr.ok_or_else(||anyhow!("No XorMappedAddress or MappedAddress in STUN reply"))?;
 
         Ok(external_addr)
     }
@@ -140,7 +142,7 @@ impl StunClient {
             let now = Instant::now();
             if now >= deadline {
                 udp.set_read_timeout(old_read_timeout)?;
-                Err(format!("Timed out waiting for STUN server reply"))?;
+                Err(anyhow!("Timed out waiting for STUN server reply"))?;
             }
             let mt = self.retry_interval.min(deadline - now);
             if Some(mt) != previous_timeout {
@@ -215,7 +217,7 @@ impl StunClient {
         match ret {
             Ok(Ok(x)) => Ok(x),
             Ok(Err(e)) => Err(e),
-            Err(_elapsed) => Err(format!("Timed out waiting for STUN server reply"))?,
+            Err(_elapsed) => Err(anyhow!("Timed out waiting for STUN server reply"))?,
         }
     }
 }
