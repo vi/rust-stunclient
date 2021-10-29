@@ -6,8 +6,8 @@ extern crate stun_codec;
 extern crate rand;  
 extern crate anyhow;
 
-extern crate tokio;
 #[cfg(feature="async")]
+extern crate tokio;
 
 use stun_codec::{MessageDecoder, MessageEncoder};
 
