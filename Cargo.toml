@@ -18,7 +18,6 @@ bytecodec = "0.4.11"
 rand = "0.8"
 tokio = {version="1",features=["time","net","macros"], optional=true }
 futures = {version="0.3",features=[], optional=true }
-anyhow = "1"
 
 [replace]
 #"stun_codec:0.1.10" = {path = "/mnt/src/git/stun_codec"}
