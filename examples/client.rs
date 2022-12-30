@@ -18,9 +18,10 @@ fn main() -> Result<(), ()> {
     };
 
     let u = std::net::UdpSocket::bind("0.0.0.0:0".parse::<std::net::SocketAddrV4>().unwrap()).unwrap();
+    println!("local {}", u.local_addr().unwrap());
 
     match sc.query_external_address(&u) {
-        Ok(x) => println!("{}", x),
+        Ok(x) => println!("mapped {}", x),
         Err(e) => {
             eprintln!("{}", e);
             return Err(());
