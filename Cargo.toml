@@ -1,6 +1,6 @@
 [package]
 name = "stunclient"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Vitaly _Vi Shukela <vi0oss@gmail.com>"]
 edition = "2018"
 description = "Simple STUN client for resolving external IP address and port of a UDP socket"
