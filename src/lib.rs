@@ -1,17 +1,10 @@
 //! Simple UDP-only STUN client for resolving external IP address:port behind NAT.
 #![deny(missing_docs)]
 
-extern crate bytecodec;
-extern crate stun_codec;
-extern crate rand;  
-extern crate anyhow;
-
-#[cfg(feature="async")]
-extern crate tokio;
-
 use stun_codec::{MessageDecoder, MessageEncoder};
 
 use bytecodec::{DecodeExt, EncodeExt};
+use std::fmt;
 use std::net::{SocketAddr, UdpSocket};
 use stun_codec::rfc5389::attributes::{
      Software,
@@ -23,10 +16,43 @@ use stun_codec::rfc5389::{methods::BINDING, Attribute};
 use stun_codec::{Message, MessageClass, TransactionId};
 use std::time::Duration;
 
-/// `anyhow`-based error handling.
-/// File an issue if you want proper `thiserror`-based errors.
-pub type Error = anyhow::Error;
-use anyhow::anyhow;
+/// The error type for any [`StunClient`] operations
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Error {
+    /// Could not encode or decode message
+    Bytecodec(bytecodec::Error),
+    /// Broken STUN message
+    Stun(stun_codec::BrokenMessage),
+    /// No XorMappedAddress or MappedAddress in STUN reply
+    NoAddress(()),
+    /// UDP socket error
+    Socket(std::io::Error),
+    /// Time out while reading socket
+    Timeout(()),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Error::Bytecodec(_) => "Could not encode or decode message",
+            Error::Stun(_) => "Broken STUN message",
+            Error::NoAddress(_) => "No XorMappedAddress or MappedAddress in STUN reply",
+            Error::Socket(_) => "UDP socket error",
+            Error::Timeout(_) => "Time out while reading socket",
+        })
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Stun(_) | Error::NoAddress(_) | Error::Timeout(_) => None,
+            Error::Bytecodec(err) => Some(err),
+            Error::Socket(err) => Some(err),
+        }
+    }
+}
 
 /// Options for querying STUN server
 pub struct StunClient {
@@ -91,20 +117,21 @@ impl StunClient {
         if let Some(s) = self.software {
             message.add_attribute(Attribute::Software(Software::new(
                 s.to_owned(),
-            )?));
+            ).map_err(Error::Bytecodec)?));
         }
 
         // Encodes the message
         let mut encoder = MessageEncoder::new();
-        let bytes = encoder.encode_into_bytes(message.clone())?;
+        let bytes = encoder.encode_into_bytes(message.clone()).map_err(Error::Bytecodec)?;
         Ok(bytes)
     }
 
     fn decode_address(buf: &[u8]) -> Result<SocketAddr, Error> {
         let mut decoder = MessageDecoder::<Attribute>::new();
         let decoded = decoder
-            .decode_from_bytes(buf)?
-            .map_err(|_| anyhow!("Broken STUN reply"))?;
+            .decode_from_bytes(buf)
+            .map_err(Error::Bytecodec)?
+            .map_err(Error::Stun)?;
 
         //eprintln!("Decoded message: {:?}", decoded);
 
@@ -114,7 +141,7 @@ impl StunClient {
         let external_addr = external_addr1
             // .or(external_addr2)
             .or(external_addr3);
-        let external_addr = external_addr.ok_or_else(||anyhow!("No XorMappedAddress or MappedAddress in STUN reply"))?;
+        let external_addr = external_addr.ok_or_else(|| Error::NoAddress(()))?;
 
         Ok(external_addr)
     }
@@ -128,11 +155,11 @@ impl StunClient {
 
         let bytes = self.get_binding_request()?;
 
-        udp.send_to(&bytes[..], stun_server)?;
+        udp.send_to(&bytes[..], stun_server).map_err(Error::Socket)?;
 
         let mut buf = [0; 256];
 
-        let old_read_timeout = udp.read_timeout()?;
+        let old_read_timeout = udp.read_timeout().map_err(|_| Error::Timeout(()))?;
         let mut previous_timeout = None;
 
         use std::time::Instant;
@@ -141,22 +168,22 @@ impl StunClient {
         loop {
             let now = Instant::now();
             if now >= deadline {
-                udp.set_read_timeout(old_read_timeout)?;
-                Err(anyhow!("Timed out waiting for STUN server reply"))?;
+                udp.set_read_timeout(old_read_timeout).map_err(Error::Socket)?;
+                return Err(Error::Timeout(()));
             }
             let mt = self.retry_interval.min(deadline - now);
             if Some(mt) != previous_timeout {
                 previous_timeout = Some(mt);
-                udp.set_read_timeout(previous_timeout)?;
+                udp.set_read_timeout(previous_timeout).map_err(Error::Socket)?;
             }
 
             let (len, addr) = match udp.recv_from(&mut buf[..]) {
                 Ok(x) => x,
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {
-                    udp.send_to(&bytes[..], stun_server)?;
+                    udp.send_to(&bytes[..], stun_server).map_err(Error::Socket)?;
                     continue;
                 },
-                Err(e) => Err(e)?,
+                Err(e) => return Err(Error::Socket(e)),
             };
             let buf = &buf[0..len];
 
@@ -168,7 +195,7 @@ impl StunClient {
 
             let external_addr = StunClient::decode_address(buf)?;
 
-            udp.set_read_timeout(old_read_timeout)?;
+            udp.set_read_timeout(old_read_timeout).map_err(Error::Socket)?;
             return Ok(external_addr)
         }
     }
@@ -189,10 +216,10 @@ impl StunClient {
             tokio::select! {
                 biased; // to make impl simpler
                 _t = interval.tick() => {
-                    udp.send_to(&rq[..], &self.stun_server).await?;
+                    udp.send_to(&rq[..], &self.stun_server).await.map_err(Error::Socket)?;
                 }
                 c = udp.recv_from(&mut buf[..]) => {
-                    let (len, from) = c?;
+                    let (len, from) = c.map_err(Error::Socket)?;
                     if from != self.stun_server {
                         continue;
                     }
@@ -217,7 +244,7 @@ impl StunClient {
         match ret {
             Ok(Ok(x)) => Ok(x),
             Ok(Err(e)) => Err(e),
-            Err(_elapsed) => Err(anyhow!("Timed out waiting for STUN server reply"))?,
+            Err(_elapsed) => Err(Error::Timeout(()))?,
         }
     }
 }
