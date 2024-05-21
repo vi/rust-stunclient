@@ -1,6 +1,6 @@
 [package]
 name = "stunclient"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Vitaly _Vi Shukela <vi0oss@gmail.com>"]
 edition = "2018"
 description = "Simple STUN client for resolving external IP address and port of a UDP socket"
@@ -11,13 +11,13 @@ categories = ["network-programming"]
 readme = "README.md"
 
 [dependencies]
-stun_codec = "0.2.0"
+stun_codec = "0.3.2"
 bytecodec = "0.4.11"
 rand = "0.8"
-tokio = {version="1",features=["time","net","macros"], optional=true }
+tokio = { version = "1", features = ["time", "net", "macros"], optional = true }
 
 [dev-dependencies]
-tokio = {version="1",features=["rt"]}
+tokio = { version = "1", features = ["rt"] }
 
 [features]
 async = ["tokio"]

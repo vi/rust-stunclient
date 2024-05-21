@@ -6,15 +6,15 @@ use stun_codec::{MessageDecoder, MessageEncoder};
 use bytecodec::{DecodeExt, EncodeExt};
 use std::fmt;
 use std::net::{SocketAddr, UdpSocket};
+use std::time::Duration;
 use stun_codec::rfc5389::attributes::{
-     Software,
-     XorMappedAddress,
-     // XorMappedAddress2, 
-     MappedAddress,
+    // XorMappedAddress2,
+    MappedAddress,
+    Software,
+    XorMappedAddress,
 };
 use stun_codec::rfc5389::{methods::BINDING, Attribute};
 use stun_codec::{Message, MessageClass, TransactionId};
-use std::time::Duration;
 
 /// The error type for any [`StunClient`] operations
 #[derive(Debug)]
@@ -78,13 +78,18 @@ impl StunClient {
     }
 
     /// Use hard coded STUN server `stun.l.google.com:19302`.
-    /// 
+    ///
     /// Not for production use, for tests, prototypes and demos.
     /// May block the thread.
     /// May panic in case of address resolution problems.
     pub fn with_google_stun_server() -> Self {
         use std::net::ToSocketAddrs;
-        let stun_server = "stun.l.google.com:19302".to_socket_addrs().unwrap().filter(|x|x.is_ipv4()).next().unwrap();
+        let stun_server = "stun.l.google.com:19302"
+            .to_socket_addrs()
+            .unwrap()
+            .filter(|x| x.is_ipv4())
+            .next()
+            .unwrap();
         StunClient::new(stun_server)
     }
 
@@ -112,17 +117,23 @@ impl StunClient {
         use rand::Rng;
         let random_bytes = rand::thread_rng().gen::<[u8; 12]>();
 
-        let mut message = Message::new(MessageClass::Request, BINDING, TransactionId::new(random_bytes));
-        
+        let mut message: Message<Attribute> = Message::new(
+            MessageClass::Request,
+            BINDING,
+            TransactionId::new(random_bytes),
+        );
+
         if let Some(s) = self.software {
-            message.add_attribute(Attribute::Software(Software::new(
-                s.to_owned(),
-            ).map_err(Error::Bytecodec)?));
+            message.add_attribute(Attribute::Software(
+                Software::new(s.to_owned()).map_err(Error::Bytecodec)?,
+            ));
         }
 
         // Encodes the message
         let mut encoder = MessageEncoder::new();
-        let bytes = encoder.encode_into_bytes(message.clone()).map_err(Error::Bytecodec)?;
+        let bytes = encoder
+            .encode_into_bytes(message.clone())
+            .map_err(Error::Bytecodec)?;
         Ok(bytes)
     }
 
@@ -135,9 +146,13 @@ impl StunClient {
 
         //eprintln!("Decoded message: {:?}", decoded);
 
-        let external_addr1 = decoded.get_attribute::<XorMappedAddress>().map(|x|x.address());
+        let external_addr1 = decoded
+            .get_attribute::<XorMappedAddress>()
+            .map(|x| x.address());
         //let external_addr2 = decoded.get_attribute::<XorMappedAddress2>().map(|x|x.address());
-        let external_addr3 = decoded.get_attribute::<MappedAddress>().map(|x|x.address());
+        let external_addr3 = decoded
+            .get_attribute::<MappedAddress>()
+            .map(|x| x.address());
         let external_addr = external_addr1
             // .or(external_addr2)
             .or(external_addr3);
@@ -147,15 +162,13 @@ impl StunClient {
     }
 
     /// Get external (server-reflexive transport address) IP address and port of specified UDP socket
-    pub fn query_external_address(
-        &self,
-        udp: &UdpSocket,
-    ) -> Result<SocketAddr, Error> {
+    pub fn query_external_address(&self, udp: &UdpSocket) -> Result<SocketAddr, Error> {
         let stun_server = self.stun_server;
 
         let bytes = self.get_binding_request()?;
 
-        udp.send_to(&bytes[..], stun_server).map_err(Error::Socket)?;
+        udp.send_to(&bytes[..], stun_server)
+            .map_err(Error::Socket)?;
 
         let mut buf = [0; 256];
 
@@ -168,21 +181,27 @@ impl StunClient {
         loop {
             let now = Instant::now();
             if now >= deadline {
-                udp.set_read_timeout(old_read_timeout).map_err(Error::Socket)?;
+                udp.set_read_timeout(old_read_timeout)
+                    .map_err(Error::Socket)?;
                 return Err(Error::Timeout(()));
             }
             let mt = self.retry_interval.min(deadline - now);
             if Some(mt) != previous_timeout {
                 previous_timeout = Some(mt);
-                udp.set_read_timeout(previous_timeout).map_err(Error::Socket)?;
+                udp.set_read_timeout(previous_timeout)
+                    .map_err(Error::Socket)?;
             }
 
             let (len, addr) = match udp.recv_from(&mut buf[..]) {
                 Ok(x) => x,
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {
-                    udp.send_to(&bytes[..], stun_server).map_err(Error::Socket)?;
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::TimedOut
+                        || e.kind() == std::io::ErrorKind::WouldBlock =>
+                {
+                    udp.send_to(&bytes[..], stun_server)
+                        .map_err(Error::Socket)?;
                     continue;
-                },
+                }
                 Err(e) => return Err(Error::Socket(e)),
             };
             let buf = &buf[0..len];
@@ -195,17 +214,17 @@ impl StunClient {
 
             let external_addr = StunClient::decode_address(buf)?;
 
-            udp.set_read_timeout(old_read_timeout).map_err(Error::Socket)?;
-            return Ok(external_addr)
+            udp.set_read_timeout(old_read_timeout)
+                .map_err(Error::Socket)?;
+            return Ok(external_addr);
         }
     }
 
-    #[cfg(feature="async")]
+    #[cfg(feature = "async")]
     async fn query_external_address_async_impl(
         self,
         udp: &tokio::net::UdpSocket,
-    ) -> Result<SocketAddr,Error> {
-
+    ) -> Result<SocketAddr, Error> {
         let mut interval = tokio::time::interval(self.retry_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -232,13 +251,13 @@ impl StunClient {
     }
 
     /// async version of `query_external_address`.
-    /// 
+    ///
     /// Requires `async` crate feature to be enabled (it is by default)
-    #[cfg(feature="async")]
+    #[cfg(feature = "async")]
     pub async fn query_external_address_async(
         self,
         udp: &tokio::net::UdpSocket,
-    ) -> Result<SocketAddr,Error> {
+    ) -> Result<SocketAddr, Error> {
         let timeout = self.timeout;
         let ret = tokio::time::timeout(timeout, self.query_external_address_async_impl(udp)).await;
         match ret {
@@ -253,7 +272,7 @@ impl StunClient {
 /// just return `UdpSocket` and its external address in one step
 /// May block, may panic, uses public Google STUN server.
 pub fn just_give_me_the_udp_socket_and_its_external_address() -> (UdpSocket, SocketAddr) {
-    let local_addr : SocketAddr = "0.0.0.0:0".parse().unwrap();
+    let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
     let udp = UdpSocket::bind(local_addr).unwrap();
 
     let c = StunClient::with_google_stun_server();
@@ -261,7 +280,6 @@ pub fn just_give_me_the_udp_socket_and_its_external_address() -> (UdpSocket, Soc
     let addr = c.query_external_address(&udp).unwrap();
     (udp, addr)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -271,13 +289,13 @@ mod tests {
         println!("{:?}", myip);
     }
 
-    #[cfg(feature="async")]
+    #[cfg(feature = "async")]
     #[tokio::test(flavor = "current_thread")]
     async fn it_works_async() {
         use std::net::SocketAddr;
-        let local_addr : SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
         let udp = tokio::net::UdpSocket::bind(&local_addr).await.unwrap();
-        
+
         let s = super::StunClient::with_google_stun_server();
         let f = s.query_external_address_async(&udp);
         let q = f.await;
