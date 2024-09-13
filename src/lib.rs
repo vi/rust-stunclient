@@ -222,7 +222,7 @@ impl StunClient {
 
     #[cfg(feature = "async")]
     async fn query_external_address_async_impl(
-        self,
+        &self,
         udp: &tokio::net::UdpSocket,
     ) -> Result<SocketAddr, Error> {
         let mut interval = tokio::time::interval(self.retry_interval);
@@ -255,7 +255,7 @@ impl StunClient {
     /// Requires `async` crate feature to be enabled (it is by default)
     #[cfg(feature = "async")]
     pub async fn query_external_address_async(
-        self,
+        &self,
         udp: &tokio::net::UdpSocket,
     ) -> Result<SocketAddr, Error> {
         let timeout = self.timeout;
