@@ -115,7 +115,7 @@ impl StunClient {
 impl StunClient {
     fn get_binding_request(&self) -> Result<Vec<u8>, Error> {
         use rand::Rng;
-        let random_bytes = rand::thread_rng().gen::<[u8; 12]>();
+        let random_bytes = rand::rng().random::<[u8; 12]>();
 
         let mut message: Message<Attribute> = Message::new(
             MessageClass::Request,
